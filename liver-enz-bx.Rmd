@@ -1,0 +1,161 @@
+---
+title: "Liver Enzymes Predicting Biopsy"
+author: "Anthony Morada"
+date: "9/8/2020"
+output: html_document
+---
+
+# The Data
+```{r setup}
+#libraries
+library(readxl)
+
+#loading data
+excel <- read_excel("~/THE GUTHRIE CLINIC/Surgical Research - Liver Enzymes Predicting Biopsy/Bariatric Surgery Patient Spreadsheet -Statistic Code.xlsx", col_types = c("skip", "date", "text", "numeric", "text", "text", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text", "text", "text", "text", "text", "skip"), skip = 1)
+
+```
+
+```{r clean}
+library(dplyr)
+#selecting columns
+df <- select(excel, Age, Sex, AST, ALT, 'Alk Phos', 'Platelet level', Albumin, INR, 'Steatosis? (Y / N)', 'Steatohepatitis? (Y / N)', 'Fibrosis? (Y / N)', 'Cirrhosis? (Y / N)')
+
+#cleaning data
+df$Sex <- as.factor(df$Sex)
+
+#Steatosis
+df$`Steatosis? (Y / N)`[grep("1",df$`Steatosis? (Y / N)`)] <- 1
+df$`Steatosis? (Y / N)`[grep("0",df$`Steatosis? (Y / N)`)] <- 0
+df$`Steatosis? (Y / N)` <-  as.factor(df$`Steatosis? (Y / N)`)
+#Steatohepatitis
+df$`Steatohepatitis? (Y / N)`[grep("1",df$`Steatohepatitis? (Y / N)`)] <- 1
+df$`Steatohepatitis? (Y / N)`[grep("0",df$`Steatohepatitis? (Y / N)`)] <- 0
+df$`Steatohepatitis? (Y / N)` <-  as.factor(df$`Steatohepatitis? (Y / N)`)
+#Fibrosis
+df$`Fibrosis? (Y / N)`[grep("1",df$`Fibrosis? (Y / N)`)] <- 1
+df$`Fibrosis? (Y / N)`[grep("0",df$`Fibrosis? (Y / N)`)] <- 0
+df$`Fibrosis? (Y / N)` <-  as.factor(df$`Fibrosis? (Y / N)`)
+#Cirrhosis
+df$`Cirrhosis? (Y / N)`[grep("1",df$`Cirrhosis? (Y / N)`)] <- 1
+df$`Cirrhosis? (Y / N)`[grep("0",df$`Cirrhosis? (Y / N)`)] <- 0
+df$`Cirrhosis? (Y / N)` <-  as.factor(df$`Cirrhosis? (Y / N)`)
+
+colnames(df) <- c("age", "sex", "AST", "ALT", "AlkP", "Platelet", "Ablumin","INR", "Steatosis", "Steatohepatitis", "Fibrosis", "Cirrhosis")
+
+#summary of data
+summary(df)
+```
+
+#Imputing missing values
+```{r missing values}
+library(mice)
+dataset_impute <- mice(df[,1:8],  print = FALSE)
+dataset_impute
+
+dataset_complete<-merge(mice::complete(dataset_impute, 1), df[,9:12], by = "row.names", all = TRUE)
+rownames(dataset_complete) <- dataset_complete$Row.names
+dataset_complete <- dataset_complete[, -1]
+```
+
+#Test, train and validation datasets
+```{r Test, train and validation datasets}
+
+outcomes <- colnames(dataset_complete)[9:12]
+for (x in outcomes){
+     print(paste("Column", x, "has", sum(dataset_complete[x] == 1, na.rm = T), "samples"))
+     plot(dataset_complete[x],main=x)
+     }
+
+```
+
+
+## Steatosis
+```{r Steatosis}
+ss <- dataset_complete[,1:9]
+
+train_index <- which(is.na(ss$Steatosis))
+train_data <- ss[-train_index, ]
+test_data  <- ss[train_index, -1]
+
+library(caret)
+set.seed(27)
+val_index <- createDataPartition(train_data$Steatosis, p = 0.7, list=FALSE)
+val_train_data <- train_data[val_index, ]
+val_test_data  <- train_data[-val_index, ]
+val_train_X <- val_train_data[,-1]
+val_test_X <- val_test_data[,-1]
+
+
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+
+set.seed(27)
+fit <- rpart(Steatosis ~ .,
+                    data = train_data,
+                    method = "class",
+                    control = rpart.control(xval = 10, minbucket = 2, cp = 0), parms = list(split = "information"))
+
+fancyRpartPlot(fit)
+```
+
+### Feature Importance - Steatosis
+```{r Feature Importance - Steatosis}
+# prepare training scheme
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+# train the model
+set.seed(27)
+model <- train(Steatosis ~ ., data = train_data, method = "rf", preProcess = NULL, trControl = control)
+
+# estimate variable importance
+importance <- varImp(model, scale=TRUE)
+
+
+# prepare for plotting
+importance_df_1 <- importance$importance
+importance_df_1$group <- rownames(importance_df_1)
+
+f = importance_df_1[order(importance_df_1$Overall, decreasing = FALSE), "group"]
+
+importance_df_2 <- importance_df_1
+importance_df_2$Overall <- 0
+
+importance_df <- rbind(importance_df_1, importance_df_2)
+
+# setting factor levels
+importance_df <- within(importance_df, group <- factor(group, levels = f))
+importance_df_1 <- within(importance_df_1, group <- factor(group, levels = f))
+
+ggplot() +
+  geom_point(data = importance_df_1, aes(x = Overall, y = group, color = group), size = 2) +
+  geom_path(data = importance_df, aes(x = Overall, y = group, color = group, group = group), size = 1) +
+  scale_color_manual(values = rep(brewer.pal(1, "Set1")[1], 11)) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5)) +
+  labs(
+    x = "Importance",
+    y = "",
+    title = "Steatosis Biopsy Result",
+    subtitle = "Scaled feature importance",
+    caption = "\nDetermined with Random Forest and
+    repeated cross validation (10 repeats, 10 times)"
+  )
+
+```
+
+
+### Comparing Machine Learning algorithms -Steatosis
+#### Random Forest - Steatosis
+```{r random forest - steatosis}
+set.seed(27)
+model_rf <- caret::train(Steatosis ~ .,
+                             data = val_train_data,
+                             method = "rf",
+                             preProcess = NULL,
+                             trControl = trainControl(method = "repeatedcv", number = 10, repeats = 10, verboseIter = FALSE))
+model_rf
+confusionMatrix(predict(model_rf, val_test_data), val_test_data$Steatosis, positive='1')
+```
+
